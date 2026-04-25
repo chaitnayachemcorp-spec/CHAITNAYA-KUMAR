@@ -53,17 +53,17 @@ const INITIAL_DATA: WellDesign[] = [
     field: 'Mumbai High North',
     isArchived: false,
     casings: [
-      { id: '1', name: 'Surface', holeSize: '26"', casingSize: '20"', depth: 1500, lithology: 'Unconsolidated Sands' },
-      { id: '2', name: 'Intermediate', holeSize: '17 1/2"', casingSize: '13 3/8"', depth: 5000, lithology: 'Reactive Shales' },
-      { id: '3', name: 'Production', holeSize: '12 1/4"', casingSize: '9 5/8"', depth: 9500, lithology: 'Carbonate Reservoir' },
+      { id: '1', name: 'Surface', holeSize: '26"', casingSize: '20"', depth: 450, lithology: 'Unconsolidated Sands' },
+      { id: '2', name: 'Intermediate', holeSize: '17 1/2"', casingSize: '13 3/8"', depth: 1520, lithology: 'Reactive Shales' },
+      { id: '3', name: 'Production', holeSize: '12 1/4"', casingSize: '9 5/8"', depth: 2890, lithology: 'Carbonate Reservoir' },
     ],
     pressureProfile: [
       { depth: 0, porePressure: 8.3, fractureGradient: 12.5 },
-      { depth: 1500, porePressure: 8.5, fractureGradient: 13.2 },
-      { depth: 3000, porePressure: 9.2, fractureGradient: 14.1 },
-      { depth: 5000, porePressure: 10.5, fractureGradient: 15.5 },
-      { depth: 7500, porePressure: 11.2, fractureGradient: 17.2 },
-      { depth: 9500, porePressure: 12.8, fractureGradient: 18.5 },
+      { depth: 450, porePressure: 8.5, fractureGradient: 13.2 },
+      { depth: 1000, porePressure: 9.2, fractureGradient: 14.1 },
+      { depth: 1520, porePressure: 10.5, fractureGradient: 15.5 },
+      { depth: 2200, porePressure: 11.2, fractureGradient: 17.2 },
+      { depth: 2890, porePressure: 12.8, fractureGradient: 18.5 },
     ],
     fluidPolicies: [
       { section: 'Surface', fluidType: 'WBM', density: 9.2, funnelViscosity: 45, pv: 15, yp: 25, gels10s: 8, gels10m: 15, fluidLoss: 10 },
@@ -139,10 +139,12 @@ const UnitConverter = () => {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'viz' | 'policy' | 'design' | 'archive' | 'historical'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'viz' | 'policy' | 'design' | 'archive' | 'historical' | 'processor'>('overview');
+  const [unit, setUnit] = useState<'m' | 'ft'>('m');
   const [projects, setProjects] = useState<WellDesign[]>(INITIAL_DATA);
   const [currentProjectId, setCurrentProjectId] = useState<string>(INITIAL_DATA[0].id);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [uploadText, setUploadText] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
@@ -161,20 +163,27 @@ export default function App() {
   const handleAnalyze = async () => {
     if (!uploadText) return;
     setIsAnalyzing(true);
+    setAnalysisError(null);
     try {
       const result = await analyzeWellData(uploadText);
-      if (result) {
+      if (result && (Array.isArray(result.casings) || Array.isArray(result.pressureProfile))) {
         setProjects(prev => prev.map(p => p.id === currentProjectId ? {
           ...p,
-          wellName: result.wellName || "Extracted Design",
-          casings: result.casings || p.casings,
-          pressureProfile: result.pressureProfile || p.pressureProfile,
-          fluidPolicies: result.fluidPolicies || p.fluidPolicies
+          wellName: result.wellName || p.wellName,
+          casings: Array.isArray(result.casings) ? result.casings.map((c: any, i: number) => ({
+            ...c,
+            id: c.id || `c-${i}-${Date.now()}`
+          })) : p.casings,
+          pressureProfile: Array.isArray(result.pressureProfile) ? result.pressureProfile : p.pressureProfile,
+          fluidPolicies: Array.isArray(result.fluidPolicies) ? result.fluidPolicies : p.fluidPolicies
         } : p));
         setActiveTab('viz');
+      } else {
+        setAnalysisError("The AI couldn't parse the data correctly. Try providing more structured text or including depth markers.");
       }
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error("Analysis Error:", err);
+      setAnalysisError("Connection to AI Engine failed. Ensure VITE_GEMINI_API_KEY is configured.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -222,8 +231,8 @@ export default function App() {
     const context = `
       Project: ${currentProject.wellName}
       Asset: ${currentProject.asset}
-      Target Depth: ${Math.max(...currentProject.pressureProfile.map(p => p.depth), 0)} ft
-      Casings: ${currentProject.casings.map(c => `${c.name} (${c.depth}ft)`).join(', ')}
+      Target Depth: ${Math.max(...currentProject.pressureProfile.map(p => p.depth), 0)} m
+      Casings: ${currentProject.casings.map(c => `${c.name} (${c.depth}m)`).join(', ')}
       Fluid: ${currentProject.fluidPolicies.map(f => `${f.section}: ${f.density}ppg ${f.fluidType}`).join(' | ')}
     `;
 
@@ -286,6 +295,12 @@ export default function App() {
             onClick={() => setActiveTab('overview')} 
             icon={<LayoutDashboard size={18} />} 
             label="Overview" 
+          />
+          <NavItem 
+            active={activeTab === 'processor'} 
+            onClick={() => setActiveTab('processor')} 
+            icon={<Upload size={18} />} 
+            label="Data Processor" 
           />
           <NavItem 
             active={activeTab === 'viz'} 
@@ -425,57 +440,40 @@ export default function App() {
               >
                 {/* Stats */}
                 <div className="col-span-12 grid grid-cols-4 gap-4 mb-2">
-                  <StatCard label="Target Depth" value={`${Math.max(...currentProject.pressureProfile.map(p => p.depth))} ft`} icon={<Activity size={16} />} />
+                  <StatCard label="Target Depth" value={`${Math.max(...currentProject.pressureProfile.map(p => p.depth), 0)} m`} icon={<Activity size={16} />} />
                   <StatCard label="Casing Sections" value={currentProject.casings.length.toString()} icon={<Database size={16} />} />
-                  <StatCard label="Max Mud Weight" value={`${Math.max(...currentProject.fluidPolicies.map(p => p.density))} ppg`} icon={<TrendingUp size={16} />} />
+                  <StatCard label="Max Mud Weight" value={`${currentProject.fluidPolicies.length > 0 ? Math.max(...currentProject.fluidPolicies.map(p => p.density)) : 0} ppg`} icon={<TrendingUp size={16} />} />
                   <StatCard label="Asset Context" value={currentProject.asset || 'Mumbai'} icon={<FileText size={16} />} />
                 </div>
 
-                {/* Analysis Area */}
-                <div className="col-span-12 lg:col-span-8 bg-white rounded border border-slate-200 p-6 shadow-sm">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-sm font-bold uppercase text-slate-500 flex items-center gap-2">
-                      <FileText className="text-brand" size={16} />
-                      Source Data Analysis
-                    </h3>
-                  </div>
-                  
-                  <div className="space-y-4">
-                    <div className="relative">
-                      <textarea 
-                        value={uploadText}
-                        onChange={(e) => setUploadText(e.target.value)}
-                        placeholder="Paste Offset Well Logs, PIT/LOT data, Formation Evaluation reports, or WCR strings here..."
-                        className="w-full h-48 bg-slate-50/50 border border-slate-200 rounded p-4 text-[11px] font-mono text-slate-700 focus:outline-none focus:border-brand/50 transition-colors"
-                      />
-                      <div className="absolute top-4 right-4 flex gap-2">
-                        <div className="p-1 px-2 text-[9px] bg-brand/10 text-brand-dark border border-brand/20 font-bold rounded">RAW DATA READY</div>
-                      </div>
+                {/* Quick Actions */}
+                <div className="col-span-12 lg:col-span-8 space-y-6">
+                  <div className="bg-white rounded border border-slate-200 p-8 shadow-sm text-center">
+                    <div className="w-16 h-16 bg-brand/10 text-brand rounded-full flex items-center justify-center mx-auto mb-4">
+                      <LayoutDashboard size={32} />
                     </div>
-
-                    <div className="flex justify-between items-center bg-slate-50 border border-slate-200 p-4 rounded">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-sm bg-slate-200 flex items-center justify-center">
-                          <Upload size={18} className="text-slate-500" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-slate-700 uppercase tracking-tight">Source Data Processor</p>
-                          <p className="text-[10px] text-slate-500">Extracts lithology, casing seats, pressure data, and test results</p>
-                        </div>
-                      </div>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Welcome to Flow-Dynamics AUTOPLANNER</h3>
+                    <p className="text-sm text-slate-500 max-w-md mx-auto mb-8">
+                      Professional drilling fluid design system. Start by processing offset well data or configuring your well design manually.
+                    </p>
+                    <div className="flex justify-center gap-4">
                       <button 
-                        onClick={handleAnalyze}
-                        disabled={isAnalyzing || !uploadText}
-                        className="px-6 py-2 bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-bold transition-all flex items-center gap-2 uppercase tracking-widest"
+                        onClick={() => setActiveTab('processor')}
+                        className="px-6 py-2 bg-brand text-white rounded font-bold text-xs uppercase tracking-widest hover:bg-brand-dark transition-colors shadow-md shadow-brand/20"
                       >
-                        {isAnalyzing ? "Processing..." : "Process Data"}
-                        <ChevronRight size={14} />
+                        Start Data Processor
+                      </button>
+                      <button 
+                        onClick={() => setActiveTab('design')}
+                        className="px-6 py-2 bg-white border border-slate-200 text-slate-600 rounded font-bold text-xs uppercase tracking-widest hover:bg-slate-50 transition-colors"
+                      >
+                        Manual Design
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Recent Projects */}
+                {/* Safety Invariants */}
                 <div className="col-span-12 lg:col-span-4 space-y-6">
                   <div className="bg-white rounded border border-slate-300 p-6 shadow-sm">
                     <h3 className="text-xs font-bold uppercase text-slate-500 mb-4 flex items-center gap-2">
@@ -489,13 +487,88 @@ export default function App() {
                       <InvariantItem label="Tolerance" value="2.5%" />
                     </div>
                   </div>
+                </div>
+              </motion.div>
+            )}
 
-                  <div className="bg-brand-dark shadow-blue-900/40 text-white p-4 rounded shadow-lg flex items-center gap-3 border border-blue-800">
-                    <div className="text-2xl font-bold flex-shrink-0 w-8 h-8 rounded-full bg-white/20 flex items-center justify-center italic">i</div>
-                    <div>
-                      <div className="text-[10px] uppercase font-bold opacity-90">Formation Advisory</div>
-                      <div className="text-[11px] font-medium leading-tight mt-0.5">Narrow drilling window detected in reservoir section. Monitor mud weight increments closely.</div>
+            {activeTab === 'processor' && (
+              <motion.div 
+                key="processor"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="grid grid-cols-12 gap-6"
+              >
+                <div className="col-span-12 lg:col-span-9 bg-white rounded border border-slate-200 p-6 shadow-sm">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-sm font-bold uppercase text-slate-500 flex items-center gap-2">
+                      <Upload className="text-brand" size={16} />
+                      Source Data Processor
+                    </h3>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="relative">
+                      <textarea 
+                        value={uploadText}
+                        onChange={(e) => setUploadText(e.target.value)}
+                        placeholder="Paste Offset Well Logs, PIT/LOT data, Formation Evaluation reports, or WCR strings here..."
+                        className="w-full h-80 bg-slate-50/50 border border-slate-200 rounded p-4 text-[11px] font-mono text-slate-700 focus:outline-none focus:border-brand/50 transition-colors"
+                      />
+                      <div className="absolute top-4 right-4 flex gap-2">
+                        <div className="p-1 px-2 text-[9px] bg-brand/10 text-brand-dark border border-brand/20 font-bold rounded">RAW DATA READY</div>
+                      </div>
                     </div>
+
+                    {analysisError && (
+                      <div className="bg-red-50 border border-red-100 text-red-600 p-4 rounded flex items-center gap-3">
+                        <AlertCircle size={18} />
+                        <p className="text-xs font-medium">{analysisError}</p>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center bg-slate-50 border border-slate-200 p-4 rounded">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-sm bg-slate-200 flex items-center justify-center">
+                          <Activity size={18} className="text-slate-500" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-700 uppercase tracking-tight">AI Analysis Engine</p>
+                          <p className="text-[10px] text-slate-500">Extracting lithology, casing seats, and pressure gradients</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={handleAnalyze}
+                        disabled={isAnalyzing || !uploadText}
+                        className="px-6 py-2 bg-brand text-white hover:bg-brand-dark disabled:opacity-50 disabled:cursor-not-allowed rounded text-xs font-bold transition-all flex items-center gap-2 uppercase tracking-widest shadow-md shadow-brand/20"
+                      >
+                        {isAnalyzing ? "Processing..." : "Process Source Data"}
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="col-span-12 lg:col-span-3 space-y-4">
+                  <div className="bg-slate-900 text-white p-6 rounded shadow-xl">
+                    <h4 className="text-[10px] font-bold text-brand uppercase tracking-widest mb-4">How it works</h4>
+                    <ul className="space-y-3 text-[11px] text-slate-400">
+                      <li className="flex gap-2">
+                        <span className="text-brand font-bold">1.</span>
+                        Paste reports (Meters preferred).
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="text-brand font-bold">2.</span>
+                        Gemini AI parses technical parameters.
+                      </li>
+                      <li className="flex gap-2">
+                        <span className="text-brand font-bold">3.</span>
+                        Design tables & plots update automatically.
+                      </li>
+                    </ul>
+                  </div>
+                  <div className="bg-white border border-slate-200 p-4 rounded text-[10px] text-slate-500 italic">
+                    Note: For best results, include depth markers in METERS (e.g., 2500 m).
                   </div>
                 </div>
               </motion.div>
@@ -546,14 +619,14 @@ export default function App() {
                         stroke="#94a3b8" 
                         fontSize={10} 
                         fontWeight="bold"
-                        label={{ value: 'TRUE VERTICAL DEPTH (FT)', angle: -90, position: 'insideLeft', offset: -25, fill: '#64748b', style: { fontSize: 10, fontWeight: '800' } }}
+                        label={{ value: 'TRUE VERTICAL DEPTH (M)', angle: -90, position: 'insideLeft', offset: -25, fill: '#64748b', style: { fontSize: 10, fontWeight: '800' } }}
                       />
                       <Tooltip 
                         contentStyle={{ backgroundColor: '#ffffff', border: '2px solid #e2e8f0', fontSize: '11px', borderRadius: '4px', fontWeight: 'bold' }}
                         itemStyle={{ padding: '2px 0' }}
                         cursor={{ stroke: '#64748b', strokeWidth: 1 }}
                         formatter={(value: any) => [`${value} ppg`, '']}
-                        labelFormatter={(label) => `Depth: ${label} ft`}
+                        labelFormatter={(label) => `Depth: ${label} m`}
                       />
 
                       {/* Casing Indicators */}
@@ -563,7 +636,7 @@ export default function App() {
                           y={c.depth} 
                           stroke="#94a3b8" 
                           strokeDasharray="5 5"
-                          label={{ value: `${c.name} Shoe: ${c.depth}ft`, position: 'right', fill: '#94a3b8', fontSize: 9, fontWeight: 'bold' }}
+                          label={{ value: `${c.name} Shoe: ${c.depth}m`, position: 'right', fill: '#94a3b8', fontSize: 9, fontWeight: 'bold' }}
                         />
                       ))}
 
@@ -622,18 +695,18 @@ export default function App() {
                         <th className="px-6 py-3 font-bold uppercase tracking-tighter">Casing Section</th>
                         <th className="px-6 py-3 font-bold uppercase tracking-tighter">Hole Size</th>
                         <th className="px-6 py-3 font-bold uppercase tracking-tighter">Casing Size</th>
-                        <th className="px-6 py-3 font-bold uppercase tracking-tighter">T.D. (ft)</th>
-                        <th className="px-6 py-3 font-bold uppercase tracking-tighter">Lithology Analysis</th>
+                        <th className="px-6 py-3 font-bold uppercase tracking-tighter">T.D. (m)</th>
+                        <th className="px-6 py-3 font-bold uppercase tracking-tighter">Lithology</th>
                         <th className="px-6 py-3 font-bold uppercase tracking-tighter text-right">Status</th>
                       </tr>
                     </thead>
                     <tbody className="font-medium text-slate-800">
-                      {currentProject.casings.map((c, i) => (
-                        <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      {currentProject.casings.length > 0 ? currentProject.casings.map((c, i) => (
+                        <tr key={c.id || i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                           <td className="px-6 py-4 font-bold">{c.name}</td>
                           <td className="px-6 py-4">{c.holeSize}</td>
                           <td className="px-6 py-4">{c.casingSize}</td>
-                          <td className="px-6 py-4 font-mono">{c.depth.toLocaleString()}</td>
+                          <td className="px-6 py-4 font-mono">{c.depth?.toLocaleString()}</td>
                           <td className="px-6 py-4 text-slate-500 italic">{c.lithology}</td>
                           <td className="px-6 py-4 text-right">
                             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-brand/10 text-brand rounded-full border border-brand/20 font-bold uppercase text-[9px]">
@@ -642,7 +715,11 @@ export default function App() {
                             </span>
                           </td>
                         </tr>
-                      ))}
+                      )) : (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-12 text-center text-slate-400 italic">No casing data available. Use the Data Processor to analyze offset reports.</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -679,7 +756,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="font-medium text-slate-800 divide-y divide-slate-100">
-                        {currentProject.fluidPolicies.map((p, i) => (
+                        {currentProject.fluidPolicies.length > 0 ? currentProject.fluidPolicies.map((p, i) => (
                           <tr key={i} className="hover:bg-slate-50 transition-colors">
                             <td className="px-4 py-4 font-bold">{p.section}</td>
                             <td className="px-4 py-4 text-brand font-bold uppercase tracking-tighter">{p.fluidType}</td>
@@ -690,7 +767,11 @@ export default function App() {
                             <td className="px-4 py-4 font-mono">{p.gels10s} / {p.gels10m}</td>
                             <td className="px-4 py-4 font-mono">{p.fluidLoss}</td>
                           </tr>
-                        ))}
+                        )) : (
+                          <tr>
+                            <td colSpan={8} className="px-4 py-12 text-center text-slate-400 italic">No fluid policy data defined for this project.</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>

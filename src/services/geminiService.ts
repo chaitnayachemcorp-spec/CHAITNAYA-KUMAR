@@ -1,11 +1,33 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const getApiKey = () => {
+  // Try Vite-prefixed env var (Standard for Vercel/External hosting)
+  const viteKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (viteKey) return viteKey;
+
+  // Try standard process.env (AI Studio environment)
+  const processKey = process.env.GEMINI_API_KEY;
+  if (processKey) return processKey;
+
+  return null;
+};
+
+const apiKey = getApiKey();
+
+if (!apiKey) {
+  console.warn("GEMINI_API_KEY is not defined. AI features will not function correctly. Please set VITE_GEMINI_API_KEY in your environment.");
+}
+
+const ai = new GoogleGenAI({ apiKey: apiKey || 'dummy-key' });
 
 export async function analyzeWellData(input: string) {
   const prompt = `
     Analyze the following Well Completion Report (WCR) or offset well data. 
     Extract casing seat depths, pore pressure, fracture gradient, lithology, and drilling fluid parameters.
+    
+    CRITICAL: The user prefers METERS (m) for depth. 
+    - If the input data is in meters, keep it in meters.
+    - If the input data is in feet, CONVERT it to meters (1 ft = 0.3048 m) so the entire design is consistent in METERS.
     
     Data:
     ${input}
